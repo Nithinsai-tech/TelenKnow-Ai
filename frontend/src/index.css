@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-fade: fadeIn 0.5s ease-out;
+  --animate-slide: slideUp 0.4s ease-out;
+
+  @keyframes fadeIn {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    0% { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-slate-900 text-slate-100 font-sans m-0 p-0;
+  }
+}
+
+.glass-panel {
+  @apply bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl;
+}
+
+.glass-input {
+  @apply bg-white/5 backdrop-blur-md border border-white/10 focus:border-blue-500/50 focus:bg-white/10 transition-all outline-none text-white placeholder-slate-400;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
