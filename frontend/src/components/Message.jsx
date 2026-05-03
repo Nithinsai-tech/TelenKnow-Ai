@@ -1,4 +1,5 @@
 import React from 'react';
+import ReactMarkdown from 'react-markdown';
 import { User, Bot } from 'lucide-react';
 
 const Message = ({ text, isUser, sources, isError }) => {
@@ -17,7 +18,7 @@ const Message = ({ text, isUser, sources, isError }) => {
         
         <div className="flex flex-col flex-1 min-w-0">
           <div className={`prose prose-invert max-w-none text-sm md:text-base leading-relaxed ${isError ? 'text-red-400' : 'text-slate-200'}`}>
-            {text}
+            <ReactMarkdown>{text}</ReactMarkdown>
           </div>
         </div>
 

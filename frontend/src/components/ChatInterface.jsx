@@ -46,7 +46,15 @@ const ChatInterface = () => {
     setIsLoading(true);
 
     try {
-      const response = await queryDocuments(userMessage.text);
+      // Format existing messages (excluding the first welcome message and any errors) into chat history
+      const chatHistory = messages
+        .filter(m => m.id !== 'welcome' && !m.isError)
+        .map(m => ({
+          role: m.isUser ? 'user' : 'ai',
+          content: m.text
+        }));
+
+      const response = await queryDocuments(userMessage.text, chatHistory);
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         text: response.answer,

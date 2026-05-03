@@ -3,7 +3,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from typing import List, Dict, Optional
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from rag_engine import get_rag_chain
@@ -45,6 +46,7 @@ app.add_middleware(
 # Models
 class QueryRequest(BaseModel):
     question: str
+    chat_history: Optional[List[Dict[str, str]]] = []
 
 class QueryResponse(BaseModel):
     question: str
@@ -89,8 +91,19 @@ async def ask_question(request: QueryRequest):
         )
     
     try:
+        # Format chat history for LangChain
+        formatted_history = []
+        for msg in request.chat_history:
+            if msg.get("role") == "user" or msg.get("role") == "human":
+                formatted_history.append(HumanMessage(content=msg.get("content", "")))
+            elif msg.get("role") == "ai" or msg.get("role") == "assistant":
+                formatted_history.append(AIMessage(content=msg.get("content", "")))
+
         # Invoke the RAG chain
-        result = rag_chain.invoke({"input": request.question})
+        result = rag_chain.invoke({
+            "input": request.question,
+            "chat_history": formatted_history
+        })
         
         # Extract source metadata
         sources = []

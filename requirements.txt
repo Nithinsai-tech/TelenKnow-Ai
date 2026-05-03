@@ -10,3 +10,4 @@ sentence-transformers
 python-dotenv
 pydantic
 pypdf
+rank_bm25
