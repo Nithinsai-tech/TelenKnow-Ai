@@ -2,7 +2,7 @@
 
 An advanced Retrieval-Augmented Generation (RAG) system built to assist telecom support agents with semantic searches of technical documentation, outage procedures, and hardware specifications.
 
-## 🌟 Features
+## 🌟 Core Features
 * **Multi-Format Ingestion:** Automatically parses and chunks `.md`, `.txt`, `.pdf`, and `.docx` files.
 * **Local Vector Database:** Uses **ChromaDB** for fast, localized, and cost-free vector storage and similarity search.
 * **Open-Source Embeddings:** Utilizes HuggingFace's `all-MiniLM-L6-v2` for high-quality, local text embeddings.
@@ -10,10 +10,30 @@ An advanced Retrieval-Augmented Generation (RAG) system built to assist telecom 
 * **FastAPI Backend:** Provides robust REST API endpoints (`/query`, `/index-sample-docs`, `/health`) with integrated CORS.
 * **React Frontend:** A modern, dynamic UI built with Vite, TailwindCSS, and Lucide React to interface seamlessly with the backend.
 
+---
+
+## 🚀 Recent Upgrades (v2.0)
+
+We have significantly upgraded the core architecture to provide an enterprise-grade user experience:
+
+### 1. 🧠 Conversation Memory (History-Aware Retrieval)
+The RAG engine is no longer stateless! It actively tracks the context of your conversation, allowing you to ask natural follow-up questions.
+- **Under the hood:** We implemented LangChain's `create_history_aware_retriever`. When you ask a follow-up question (e.g., *"What is step 2?"*), the AI reads the chat history and silently rewrites your question into a standalone query (e.g., *"What is step 2 of configuring OSPF?"*) before searching the database. 
+
+### 2. 🔍 Hybrid Search (Semantic + Keyword)
+Pure semantic search is great for understanding meaning, but it can miss highly specific technical terms. We upgraded the retrieval system to use **Hybrid Search**.
+- **Under the hood:** We integrated the `rank_bm25` algorithm to perform exact-keyword matching. Every time the engine starts, it builds a lightning-fast in-memory BM25 index from your ChromaDB chunks. When a question is asked, an `EnsembleRetriever` runs both searches simultaneously and merges the results using Reciprocal Rank Fusion (RRF). This guarantees we never miss specific error codes, exact voltages, or part numbers!
+
+### 3. ✨ Beautiful Markdown UI Rendering
+Raw text dumps have been completely eliminated. The frontend now actively parses the AI's output and renders proper HTML typography.
+- **Under the hood:** We integrated `react-markdown` and the `@tailwindcss/typography` plugin. The AI is explicitly instructed via prompt engineering to use professional formatting, bullet points, and beginner-friendly language to explain telecom jargon, resulting in a highly polished, readable chat interface.
+
+---
+
 ## 🏗️ Architecture Stack
-* **Frontend:** React, Vite, TailwindCSS, Axios
+* **Frontend:** React, Vite, TailwindCSS (with Typography plugin), Axios, React-Markdown
 * **Backend:** Python, FastAPI, Uvicorn
-* **AI/ML Layer:** LangChain, HuggingFace (`sentence-transformers`), Groq API
+* **AI/ML Layer:** LangChain, HuggingFace (`sentence-transformers`), Groq API, Rank-BM25
 * **Database:** ChromaDB (Local persistence)
 
 ## 🚀 Getting Started
