@@ -12,3 +12,4 @@ pydantic
 pypdf
 rank_bm25
 python-docx
+docx2txt
