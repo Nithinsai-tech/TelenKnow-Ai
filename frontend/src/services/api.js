@@ -1,16 +1,15 @@
 import axios from 'axios';
 
-// Point frontend to the backend running on port 8002
-const API_BASE_URL = 'http://localhost:8002';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 const api = axios.create({
   baseURL: API_BASE_URL,
 });
 
 export const queryDocuments = async (query, chatHistory = []) => {
-  const response = await api.post('/query', { 
-    question: query, 
-    chat_history: chatHistory 
+  const response = await api.post('/query', {
+    question: query,
+    chat_history: chatHistory,
   });
   return response.data;
 };
