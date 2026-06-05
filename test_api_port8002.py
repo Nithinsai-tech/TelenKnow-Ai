@@ -3,10 +3,10 @@ import json
 import time
 
 def test_query():
-    base_url = "http://localhost:8001"
+    base_url = "http://localhost:8002"
     
     # 1. Trigger Indexing
-    print("Triggering document indexing...")
+    print("Triggering document indexing on port 8002...")
     try:
         response = requests.post(f"{base_url}/index-sample-docs")
         print(f"Index status: {response.status_code}")
@@ -20,8 +20,8 @@ def test_query():
     
     # 2. Test queries
     queries = [
-        "What is the target MTTR for Enterprise Fiber?", # from PDF
-        "What is the maximum power consumption of a 5G base station?" # from DOCX
+        "What is the target MTTR for Enterprise Fiber?",
+        "What is the maximum power consumption of a 5G base station?"
     ]
     
     headers = {"Content-Type": "application/json"}

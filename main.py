@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_classic.chains import create_retrieval_chain
+import json
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from rag_engine import get_rag_chain
 from ingest import ingest_docs
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
         print("RAG Engine successfully initialized.")
     except Exception as e:
         print(f"CRITICAL: RAG Engine failed to initialize: {e}")
+        raise
     yield
 
 # Initialize FastAPI App
@@ -35,7 +37,10 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=[
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
+    ],  # Specific dev origins
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
@@ -52,15 +57,20 @@ class QueryResponse(BaseModel):
     question: str
     answer: str
     sources: List[str]
+    confidence: Optional[float] = None
+    sources_meta: Optional[List[Dict[str, Optional[object]]]] = []
 
 # Endpoints
 @app.get("/health")
 def health():
     """Health check endpoint."""
-    return {
-        "status": "healthy",
+    status = {
+        "status": "healthy" if rag_chain is not None else "unhealthy",
         "engine_ready": rag_chain is not None
     }
+    if rag_chain is None:
+        status["message"] = "RAG Engine not initialized. Check server logs for startup errors."
+    return status
 
 @app.post("/index-sample-docs")
 def index_documents():
@@ -87,10 +97,12 @@ async def ask_question(request: QueryRequest):
     if rag_chain is None:
         raise HTTPException(
             status_code=503, 
-            detail="RAG Engine is not initialized. Ensure documents are ingested."
+            detail="RAG Engine is not initialized. Please click 'Index Sample Docs' or ensure the backend started successfully."
         )
     
     try:
+        print(f"Processing query: {request.question}")
+        
         # Format chat history for LangChain
         formatted_history = []
         for msg in request.chat_history:
@@ -100,24 +112,90 @@ async def ask_question(request: QueryRequest):
                 formatted_history.append(AIMessage(content=msg.get("content", "")))
 
         # Invoke the RAG chain
+        print("Invoking RAG chain...")
         result = rag_chain.invoke({
             "input": request.question,
             "chat_history": formatted_history
         })
+        print(f"RAG chain response received")
         
-        # Extract source metadata
-        sources = []
-        if "context" in result:
-            sources = list(set([doc.metadata.get("source", "Unknown") for doc in result["context"]]))
+        # Default empty
+        answer_text = ""
+        confidence = None
+        sources_display = []
+        sources_meta = []
+
+        # The chain's `answer` may be plain text or a JSON string following our stricter prompt.
+        raw_answer = result.get("answer", "") if isinstance(result, dict) else ""
+
+        # Try to parse JSON output from the model. Handle nested JSON strings robustly.
+        try:
+            parsed = json.loads(raw_answer)
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed)
+                except Exception:
+                    pass
+
+            if isinstance(parsed, dict):
+                ans_field = parsed.get("answer", "")
+                confidence = parsed.get("confidence")
+                sources_meta = parsed.get("sources", []) or []
+
+                if isinstance(ans_field, dict):
+                    lines = [f"{k}: {v}" for k, v in ans_field.items()]
+                    answer_text = "\n".join(lines)
+                else:
+                    answer_text = str(ans_field)
+            else:
+                answer_text = raw_answer or ""
+        except Exception:
+            answer_text = raw_answer or ""
+
+        # If model didn't return structured sources, extract metadata from retrieval context
+        if not sources_meta and isinstance(result, dict) and "context" in result:
+            for doc in result["context"]:
+                meta = getattr(doc, "metadata", {}) if hasattr(doc, "metadata") else doc.get("metadata", {})
+                source_name = meta.get("source") or meta.get("filename") or "Unknown"
+                chunk = meta.get("chunk") or meta.get("page") or None
+                similarity = meta.get("score") or meta.get("similarity") or None
+                sources_meta.append({"source": source_name, "chunk": chunk, "similarity": similarity})
+
+        # Build human-friendly sources display lines
+        for s in sources_meta:
+            src = s.get("source", "Unknown")
+            chunk = s.get("chunk")
+            sim = s.get("similarity")
+            parts = [f"Source: {src}"]
+            if chunk is not None:
+                parts.append(f"Chunk: {chunk}")
+            if sim is not None:
+                try:
+                    parts.append(f"Similarity: {float(sim):.2f}")
+                except Exception:
+                    parts.append(f"Similarity: {sim}")
+            sources_display.append(": ".join(parts))
+
+        if not sources_display and sources_meta:
+            sources_display = [f"Source: {s.get('source', 'Unknown')}" for s in sources_meta]
+
+        if not answer_text or answer_text.strip() == "":
+            answer_text = "Insufficient context."
+            confidence = 0.0
 
         return QueryResponse(
             question=request.question,
-            answer=result["answer"],
-            sources=sources
+            answer=answer_text,
+            sources=sources_display,
+            confidence=confidence,
+            sources_meta=sources_meta
         )
     except Exception as e:
+        print(f"ERROR processing query: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
 if __name__ == "__main__":
     # Run the server
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8002)

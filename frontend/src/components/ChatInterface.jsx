@@ -59,7 +59,9 @@ const ChatInterface = () => {
         id: Date.now().toString(),
         text: response.answer,
         isUser: false,
-        sources: response.sources
+        sources: response.sources,
+        sources_meta: response.sources_meta || response.sources || [],
+        confidence: response.confidence
       }]);
     } catch (error) {
       console.error("Error querying:", error);
