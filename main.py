@@ -7,7 +7,6 @@ from typing import List, Dict, Optional
 from langchain_core.messages import HumanMessage, AIMessage
 import json
 from rag_engine import get_rag_chain
-from ingest import ingest_docs
 
 # Global variable for the RAG chain
 rag_chain = None
@@ -39,8 +38,8 @@ app = FastAPI(
 # -------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # allows any domain (Vercel, localhost, etc.)
-    allow_credentials=False,      # must be False when allow_origins=["*"]
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -77,24 +76,20 @@ def health():
 @app.post("/index-sample-docs")
 def index_documents():
     """
-    Trigger document ingestion and reload the RAG chain.
-    Uses a try/except so a failure returns a clear 500 message
-    instead of crashing the server.
+    Documents are pre-indexed in the chroma_db folder committed to GitHub.
+    Re-indexing on Railway exceeds available memory on the free tier.
+    This endpoint confirms the existing index is ready.
     """
     global rag_chain
-    try:
-        print("=== /index-sample-docs called ===")
-        ingest_docs()
-        print("=== ingest_docs() completed — reloading RAG chain ===")
-        rag_chain = get_rag_chain()
-        print("=== RAG chain reloaded successfully ===")
-        return {"message": "Documents indexed successfully.", "details": {"status": "success"}}
-    except Exception as e:
-        import traceback
-        print("=== ERROR in /index-sample-docs ===")
-        traceback.print_exc()
-        # Return 500 with the real error message (does NOT crash/restart the server)
-        raise HTTPException(status_code=500, detail=str(e))
+    if rag_chain is None:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG Engine not initialized.",
+        )
+    return {
+        "message": "Documents already indexed and ready.",
+        "details": {"status": "success"},
+    }
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -103,7 +98,7 @@ async def ask_question(request: QueryRequest):
     if rag_chain is None:
         raise HTTPException(
             status_code=503,
-            detail="RAG Engine not initialized. Click 'Index Sample Docs' first.",
+            detail="RAG Engine not initialized.",
         )
 
     try:
@@ -197,7 +192,10 @@ async def ask_question(request: QueryRequest):
         import traceback
         print(f"ERROR processing query: {type(e).__name__}: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing query: {str(e)}",
+        )
 
 
 if __name__ == "__main__":
