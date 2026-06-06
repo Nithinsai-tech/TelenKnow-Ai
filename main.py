@@ -5,14 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_classic.chains import create_retrieval_chain
 import json
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from rag_engine import get_rag_chain
 from ingest import ingest_docs
 
 # Global variable for the RAG chain
 rag_chain = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,32 +25,34 @@ async def lifespan(app: FastAPI):
         raise
     yield
 
+
 # Initialize FastAPI App
 app = FastAPI(
     title="Telecom Support RAG API",
-    description="A semantic retrieval system for telecom technical documentation using Groq and ChromaDB.",
+    description="A semantic retrieval system for telecom technical documentation.",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-# Configure CORS
+# -------------------------------------------------------
+# CORS — allow ALL origins so Vercel and localhost work
+# -------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5175",
-        "http://127.0.0.1:5175",
-    ],  # Specific dev origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_origins=["*"],          # allows any domain (Vercel, localhost, etc.)
+    allow_credentials=False,      # must be False when allow_origins=["*"]
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
-
+# -------------------------------------------------------
 # Models
+# -------------------------------------------------------
 class QueryRequest(BaseModel):
     question: str
     chat_history: Optional[List[Dict[str, str]]] = []
+
 
 class QueryResponse(BaseModel):
     question: str
@@ -60,75 +61,77 @@ class QueryResponse(BaseModel):
     confidence: Optional[float] = None
     sources_meta: Optional[List[Dict[str, Optional[object]]]] = []
 
+
+# -------------------------------------------------------
 # Endpoints
+# -------------------------------------------------------
 @app.get("/health")
 def health():
     """Health check endpoint."""
-    status = {
+    return {
         "status": "healthy" if rag_chain is not None else "unhealthy",
-        "engine_ready": rag_chain is not None
+        "engine_ready": rag_chain is not None,
     }
-    if rag_chain is None:
-        status["message"] = "RAG Engine not initialized. Check server logs for startup errors."
-    return status
+
 
 @app.post("/index-sample-docs")
 def index_documents():
-    """Endpoint to trigger document ingestion."""
+    """
+    Trigger document ingestion and reload the RAG chain.
+    Uses a try/except so a failure returns a clear 500 message
+    instead of crashing the server.
+    """
+    global rag_chain
     try:
+        print("=== /index-sample-docs called ===")
         ingest_docs()
-        
-        # Re-initialize the RAG chain with the new data
-        global rag_chain
+        print("=== ingest_docs() completed — reloading RAG chain ===")
         rag_chain = get_rag_chain()
-        
-        return {
-            "message": "Documents indexed successfully.",
-            "details": {"status": "success"}
-        }
+        print("=== RAG chain reloaded successfully ===")
+        return {"message": "Documents indexed successfully.", "details": {"status": "success"}}
     except Exception as e:
+        import traceback
+        print("=== ERROR in /index-sample-docs ===")
+        traceback.print_exc()
+        # Return 500 with the real error message (does NOT crash/restart the server)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/query", response_model=QueryResponse)
 async def ask_question(request: QueryRequest):
-    """
-    Query the RAG system for a context-aware answer.
-    """
+    """Query the RAG system for a context-aware answer."""
     if rag_chain is None:
         raise HTTPException(
-            status_code=503, 
-            detail="RAG Engine is not initialized. Please click 'Index Sample Docs' or ensure the backend started successfully."
+            status_code=503,
+            detail="RAG Engine not initialized. Click 'Index Sample Docs' first.",
         )
-    
+
     try:
         print(f"Processing query: {request.question}")
-        
-        # Format chat history for LangChain
+
+        # Format chat history
         formatted_history = []
         for msg in request.chat_history:
-            if msg.get("role") == "user" or msg.get("role") == "human":
-                formatted_history.append(HumanMessage(content=msg.get("content", "")))
-            elif msg.get("role") == "ai" or msg.get("role") == "assistant":
-                formatted_history.append(AIMessage(content=msg.get("content", "")))
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role in ("user", "human"):
+                formatted_history.append(HumanMessage(content=content))
+            elif role in ("ai", "assistant"):
+                formatted_history.append(AIMessage(content=content))
 
-        # Invoke the RAG chain
-        print("Invoking RAG chain...")
         result = rag_chain.invoke({
             "input": request.question,
-            "chat_history": formatted_history
+            "chat_history": formatted_history,
         })
-        print(f"RAG chain response received")
-        
-        # Default empty
+
         answer_text = ""
         confidence = None
         sources_display = []
         sources_meta = []
 
-        # The chain's `answer` may be plain text or a JSON string following our stricter prompt.
         raw_answer = result.get("answer", "") if isinstance(result, dict) else ""
 
-        # Try to parse JSON output from the model. Handle nested JSON strings robustly.
+        # Try to parse JSON output from the model
         try:
             parsed = json.loads(raw_answer)
             if isinstance(parsed, str):
@@ -141,10 +144,8 @@ async def ask_question(request: QueryRequest):
                 ans_field = parsed.get("answer", "")
                 confidence = parsed.get("confidence")
                 sources_meta = parsed.get("sources", []) or []
-
                 if isinstance(ans_field, dict):
-                    lines = [f"{k}: {v}" for k, v in ans_field.items()]
-                    answer_text = "\n".join(lines)
+                    answer_text = "\n".join(f"{k}: {v}" for k, v in ans_field.items())
                 else:
                     answer_text = str(ans_field)
             else:
@@ -152,16 +153,20 @@ async def ask_question(request: QueryRequest):
         except Exception:
             answer_text = raw_answer or ""
 
-        # If model didn't return structured sources, extract metadata from retrieval context
+        # Fall back to context metadata if model didn't return structured sources
         if not sources_meta and isinstance(result, dict) and "context" in result:
             for doc in result["context"]:
-                meta = getattr(doc, "metadata", {}) if hasattr(doc, "metadata") else doc.get("metadata", {})
-                source_name = meta.get("source") or meta.get("filename") or "Unknown"
-                chunk = meta.get("chunk") or meta.get("page") or None
-                similarity = meta.get("score") or meta.get("similarity") or None
-                sources_meta.append({"source": source_name, "chunk": chunk, "similarity": similarity})
+                meta = (
+                    getattr(doc, "metadata", {})
+                    if hasattr(doc, "metadata")
+                    else doc.get("metadata", {})
+                )
+                sources_meta.append({
+                    "source": meta.get("source") or meta.get("filename") or "Unknown",
+                    "chunk": meta.get("chunk") or meta.get("page"),
+                    "similarity": meta.get("score") or meta.get("similarity"),
+                })
 
-        # Build human-friendly sources display lines
         for s in sources_meta:
             src = s.get("source", "Unknown")
             chunk = s.get("chunk")
@@ -176,10 +181,7 @@ async def ask_question(request: QueryRequest):
                     parts.append(f"Similarity: {sim}")
             sources_display.append(": ".join(parts))
 
-        if not sources_display and sources_meta:
-            sources_display = [f"Source: {s.get('source', 'Unknown')}" for s in sources_meta]
-
-        if not answer_text or answer_text.strip() == "":
+        if not answer_text or not answer_text.strip():
             answer_text = "Insufficient context."
             confidence = 0.0
 
@@ -188,14 +190,15 @@ async def ask_question(request: QueryRequest):
             answer=answer_text,
             sources=sources_display,
             confidence=confidence,
-            sources_meta=sources_meta
+            sources_meta=sources_meta,
         )
+
     except Exception as e:
-        print(f"ERROR processing query: {type(e).__name__}: {str(e)}")
         import traceback
+        print(f"ERROR processing query: {type(e).__name__}: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
+
 if __name__ == "__main__":
-    # Run the server
     uvicorn.run(app, host="0.0.0.0", port=8002)
